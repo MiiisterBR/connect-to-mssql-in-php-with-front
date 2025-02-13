@@ -5,6 +5,8 @@ $tableName = $_POST['table_name'] ?? '';
 $whereClause = $_POST['where_clause'] ?? '';
 $limit = (int)($_POST['limit'] ?? 100);
 $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+$orderBy = $_POST['order_by'] ?? '';
+
 global $conn;
 
 try {
@@ -16,23 +18,36 @@ try {
     $countStmt = $conn->query($countQuery);
     $totalCount = (int)$countStmt->fetch(PDO::FETCH_ASSOC)['total'];
 
-    // Adjust query based on limit (0 means unlimited records)
-    if ($limit === 0) {
-        $query = "SELECT * FROM $tableName";
-    } else {
-        $query = "SELECT * FROM $tableName ORDER BY (SELECT NULL) OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY";
-    }
-
+    // Construct main query
+    $query = "SELECT * FROM $tableName";
     if (!empty($whereClause)) {
         $query .= " WHERE $whereClause";
     }
 
+    // Ensure ORDER BY exists if OFFSET/FETCH is used
+    if (empty($orderBy) && $limit > 0) {
+        $orderBy = "(SELECT NULL)"; // Default ordering to prevent SQL error
+    }
+
+    if (!empty($orderBy)) {
+        $query .= " ORDER BY $orderBy";
+    }
+
+    // Apply pagination only if limit is greater than 0
+    if ($limit > 0) {
+        $query .= " OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY";
+    }
+
+    // Debugging: Print query to check values
+    error_log("Executing query: " . $query);
+
+    // Execute query
     $stmt = $conn->query($query);
     $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     ob_start();
     if (count($data) > 0) {
-        $currentPage = ($limit === 0) ? 1 : (int)($offset / $limit) + 1;
+        $currentPage = ($limit === 0) ? 1 : (int)($offset / max($limit, 1)) + 1;
         $totalPages = ($limit === 0) ? 1 : ceil($totalCount / max($limit, 1));
 
         echo "<div class='mb-4 text-gray-700 text-lg text-center'>
@@ -68,6 +83,7 @@ try {
     }
 
     echo json_encode(['status' => 'OK', 'html' => ob_get_clean()]);
-} catch (PDOException $exception) {
+} catch (Exception $exception) {
+    error_log("Query failed: " . $exception->getMessage());
     echo json_encode(['status' => 'ERR', 'msg' => 'Database query failed', 'details' => $exception->getMessage()]);
 }
